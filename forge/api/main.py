@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -25,6 +26,7 @@ from forge.api.routers import (
     serving,
     webhooks,
 )
+from forge.api.services.migrations import run_migrations
 from forge.api.services.run_recovery import recover_orphaned_runs
 from forge.api.services.runtime import configure_torch_threads
 
@@ -36,7 +38,9 @@ configure_torch_threads()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Startup: fail training runs orphaned by the previous process."""
+    """Startup: apply migrations, then fail training runs orphaned by the previous process."""
+    if not await asyncio.to_thread(run_migrations):
+        logger.error("Startup migrations failed; endpoints needing new tables may error")
     db = SessionLocal()
     try:
         recover_orphaned_runs(db)
