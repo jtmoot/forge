@@ -132,6 +132,18 @@ def build_agent_graph(tools: list, model_name: str = "claude-sonnet-5-5") -> Sta
     return graph.compile()
 
 
+def extract_final_answer(messages: list) -> str:
+    """Return the text of the last AI message that isn't a tool call.
+
+    Current Claude models return content as a list of blocks (thinking + text),
+    so only the text blocks are joined; an empty string means no final answer.
+    """
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and not msg.tool_calls:
+            return msg.text
+    return ""
+
+
 def run_agent_query(question: str, db) -> dict[str, Any]:
     """Run a natural language query through the agent and return structured results.
 
@@ -156,15 +168,8 @@ def run_agent_query(question: str, db) -> dict[str, Any]:
 
     result = agent.invoke(initial_state)
 
-    # Extract the final answer from the last AI message
-    answer = ""
-    for msg in reversed(result["messages"]):
-        if isinstance(msg, AIMessage) and not msg.tool_calls:
-            answer = msg.content
-            break
-
     return {
-        "answer": answer,
+        "answer": extract_final_answer(result["messages"]),
         "tools_used": list(set(result.get("tools_used", []))),
         "intermediate_results": result.get("intermediate_results", []),
     }
