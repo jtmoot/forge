@@ -31,6 +31,7 @@ from forge.api.services.metrics import (
     SERVING_MODEL_LOADS_TOTAL,
     SERVING_REQUEST_SECONDS,
 )
+from forge.api.services.runtime import init_worker_thread
 from forge.api.services.s3_client import ArtifactNotFoundError, download_model_artifact
 from forge.api.services.training import (
     DEFAULT_CONFIGS,
@@ -255,7 +256,10 @@ async def infer(servable: ServableModel, raw_inputs: list) -> InferenceResult:
         batcher = batcher_pool.get_or_create(
             (servable.name, servable.version, servable.backend),
             lambda: MicroBatcher(
-                lambda batch: predict_proba(servable, batch), config, label=servable.name
+                lambda batch: predict_proba(servable, batch),
+                config,
+                label=servable.name,
+                thread_initializer=init_worker_thread,
             ),
         )
         probabilities = await batcher.submit(inputs)

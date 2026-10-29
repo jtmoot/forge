@@ -4,14 +4,18 @@ os.cpu_count() reports the host's cores, not the container's cgroup CPU
 quota. Torch sizes its intra-op pool from the former, so on a throttled
 container it oversubscribes the quota and training/inference slow down by
 orders of magnitude. This module reads the quota and sizes the pool to it.
+
+torch.set_num_threads() only applies to the calling thread's OpenMP team on
+Linux; worker threads (FastAPI's threadpool, asyncio.to_thread, the batcher)
+otherwise start a team sized to every visible core. export_thread_env() sets
+OMP_NUM_THREADS before torch is first imported so every thread inherits the
+right size. This module must not import torch at module level for that reason.
 """
 
 import logging
 import math
 import os
 from pathlib import Path
-
-import torch
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +68,31 @@ def resolve_torch_threads(cpu_limit: float | None, cpu_count: int, override: str
     return max(1, min(cpu_count, math.floor(cpu_limit)))
 
 
+def export_thread_env() -> int:
+    """Set OMP_NUM_THREADS / MKL_NUM_THREADS from the CPU quota unless already set.
+
+    Must run before torch (or any OpenMP library) is first imported. Returns
+    the thread count now in effect for OpenMP.
+    """
+    threads = resolve_torch_threads(
+        container_cpu_limit(), os.cpu_count() or 1, os.getenv("FORGE_TORCH_THREADS")
+    )
+    os.environ.setdefault("OMP_NUM_THREADS", str(threads))
+    os.environ.setdefault("MKL_NUM_THREADS", os.environ["OMP_NUM_THREADS"])
+    return int(os.environ["OMP_NUM_THREADS"])
+
+
+def init_worker_thread() -> None:
+    """Thread-pool initializer: size this thread's OpenMP team like the main thread's."""
+    import torch
+
+    torch.set_num_threads(torch.get_num_threads())
+
+
 def configure_torch_threads() -> dict:
     """Size torch's thread pool to the container and return the runtime facts used."""
+    import torch
+
     cpu_count = os.cpu_count() or 1
     cpu_limit = container_cpu_limit()
     threads = resolve_torch_threads(cpu_limit, cpu_count, os.getenv("FORGE_TORCH_THREADS"))
@@ -79,6 +106,8 @@ def configure_torch_threads() -> dict:
 
 def runtime_info() -> dict:
     """Describe the compute this process runs on (recorded with serving results)."""
+    import torch
+
     return {
         "cpu_count": os.cpu_count() or 1,
         "cpu_limit": container_cpu_limit(),
