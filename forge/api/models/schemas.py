@@ -736,3 +736,85 @@ class ServedModelListResponse(BaseModel):
 
     models: list[ServedModelResponse]
     runtime: ServingRuntime
+
+
+# ---------------------------------------------------------------------------
+# Serving benchmark schemas
+# ---------------------------------------------------------------------------
+
+
+class BenchmarkRequest(BaseModel):
+    """Request body for POST /api/serve/{model_name}/benchmarks. Omitted fields use the default grid."""
+
+    backends: list[str] | None = Field(default=None, min_length=1)
+    batch_configs: list[BatchConfigRequest] | None = Field(default=None, min_length=1)
+    concurrency: list[int] | None = Field(default=None, min_length=1)
+    requests_per_cell: int = Field(default=200, ge=20, le=5000)
+
+
+class BenchmarkCell(BaseModel):
+    """Results for one backend x batching policy x concurrency cell."""
+
+    backend: str
+    max_batch_size: int
+    max_wait_ms: float
+    concurrency: int
+    requests: int
+    errors: int
+    error_rate: float
+    p50_ms: float | None
+    p95_ms: float | None
+    p99_ms: float | None
+    mean_ms: float | None
+    throughput_rps: float
+    mean_batch_rows: float
+    duration_s: float
+
+
+class BenchmarkResponse(BaseModel):
+    """A serving benchmark and every cell completed so far."""
+
+    model_config = {"from_attributes": True}
+
+    id: UUID
+    model_name: str
+    model_version: int
+    status: str
+    params: dict | None = None
+    runtime: dict | None = None
+    results: list[BenchmarkCell] = Field(default_factory=list)
+    error: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class BenchmarkSummary(BaseModel):
+    """List entry for a serving benchmark."""
+
+    id: UUID
+    model_name: str
+    model_version: int
+    status: str
+    cells: int
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class BenchmarkListResponse(BaseModel):
+    """Recent serving benchmarks for a model."""
+
+    benchmarks: list[BenchmarkSummary]
+
+
+class ServingRecommendationResponse(BaseModel):
+    """Highest-throughput config meeting a p99 SLO, from the latest completed benchmark."""
+
+    benchmark_id: UUID
+    model_name: str
+    model_version: int
+    slo_p99_ms: float
+    meets_slo: bool
+    best: BenchmarkCell | None
+    candidates: list[BenchmarkCell]
+    lowest_p99: BenchmarkCell | None
+    cells_considered: int

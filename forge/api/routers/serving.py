@@ -2,8 +2,9 @@
 
 import logging
 from dataclasses import asdict
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
@@ -12,11 +13,16 @@ from forge.api.models.schemas import (
     BackendParity,
     BatchConfigRequest,
     BatchConfigResponse,
+    BenchmarkListResponse,
+    BenchmarkRequest,
+    BenchmarkResponse,
+    BenchmarkSummary,
     Prediction,
     PredictRequest,
     PredictResponse,
     ServedModelListResponse,
     ServedModelResponse,
+    ServingRecommendationResponse,
     ServingRuntime,
 )
 from forge.api.services.batcher import BatchConfig
@@ -33,6 +39,17 @@ from forge.api.services.model_server import (
     set_batch_config,
 )
 from forge.api.services.runtime import runtime_info
+from forge.api.services.serving_bench import (
+    DEFAULT_GRID,
+    BenchmarkError,
+    BenchmarkGrid,
+    execute_benchmark,
+    get_benchmark,
+    latest_completed_benchmark,
+    list_benchmarks,
+    recommend_config,
+    start_benchmark,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,4 +169,111 @@ async def predict(
             for prob, label in zip(result.probabilities, result.labels, strict=True)
         ],
         latency_ms=result.latency_ms,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Benchmarks
+# ---------------------------------------------------------------------------
+
+
+@router.get("/benchmarks/{benchmark_id}", response_model=BenchmarkResponse)
+def get_benchmark_endpoint(
+    benchmark_id: UUID,
+    db: Session = Depends(get_db),
+) -> BenchmarkResponse:
+    """Return a benchmark and every cell completed so far (poll while it runs)."""
+    benchmark = get_benchmark(db, benchmark_id)
+    if benchmark is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Benchmark not found")
+    return BenchmarkResponse.model_validate(benchmark)
+
+
+@router.post(
+    "/{model_name}/benchmarks",
+    response_model=BenchmarkResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_benchmark(
+    model_name: str,
+    request: BenchmarkRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> BenchmarkResponse:
+    """Start a load test of the production model across backends, batching and concurrency.
+
+    Runs in the background (about a minute for the default 48-cell grid);
+    poll GET /api/serve/benchmarks/{id}. Only one benchmark runs at a time.
+    """
+    try:
+        grid = BenchmarkGrid(
+            backends=tuple(request.backends) if request.backends else DEFAULT_GRID.backends,
+            batch_configs=(
+                tuple(BatchConfig(c.max_batch_size, c.max_wait_ms) for c in request.batch_configs)
+                if request.batch_configs
+                else DEFAULT_GRID.batch_configs
+            ),
+            concurrency=tuple(request.concurrency) if request.concurrency else DEFAULT_GRID.concurrency,
+            requests_per_cell=request.requests_per_cell,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    try:
+        servable = await run_in_threadpool(get_production_servable, db, model_name)
+        grid.check_size(len(servable.backends))
+        benchmark = await run_in_threadpool(start_benchmark, db, model_name, servable.version, grid)
+    except ServingError as exc:
+        raise _to_http_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except BenchmarkError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    background_tasks.add_task(execute_benchmark, benchmark.id, grid)
+    return BenchmarkResponse.model_validate(benchmark)
+
+
+@router.get("/{model_name}/benchmarks", response_model=BenchmarkListResponse)
+def list_benchmarks_endpoint(
+    model_name: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> BenchmarkListResponse:
+    """List a model's recent benchmarks, newest first."""
+    return BenchmarkListResponse(
+        benchmarks=[
+            BenchmarkSummary(
+                id=b.id,
+                model_name=b.model_name,
+                model_version=b.model_version,
+                status=b.status,
+                cells=len(b.results or []),
+                started_at=b.started_at,
+                completed_at=b.completed_at,
+            )
+            for b in list_benchmarks(db, model_name, limit)
+        ]
+    )
+
+
+@router.get("/{model_name}/recommendation", response_model=ServingRecommendationResponse)
+def recommend_serving_config(
+    model_name: str,
+    slo_p99_ms: float = Query(..., gt=0, description="p99 latency target in milliseconds"),
+    db: Session = Depends(get_db),
+) -> ServingRecommendationResponse:
+    """Highest-throughput backend/batching/concurrency meeting a p99 SLO, from the latest benchmark."""
+    benchmark = latest_completed_benchmark(db, model_name)
+    if benchmark is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No completed benchmark for '{model_name}'; POST /api/serve/{model_name}/benchmarks first",
+        )
+    recommendation = recommend_config(benchmark.results or [], slo_p99_ms)
+    return ServingRecommendationResponse(
+        benchmark_id=benchmark.id,
+        model_name=benchmark.model_name,
+        model_version=benchmark.model_version,
+        **recommendation,
     )
