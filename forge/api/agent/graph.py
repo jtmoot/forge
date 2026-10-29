@@ -110,7 +110,6 @@ def build_agent_graph(tools: list, model_name: str = "claude-sonnet-5-5") -> Sta
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
     llm = ChatAnthropic(
         model=model_name,
-        temperature=0,
         api_key=anthropic_api_key,
     )
     llm_with_tools = llm.bind_tools(tools)
