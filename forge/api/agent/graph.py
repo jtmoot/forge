@@ -97,7 +97,7 @@ def _call_tools(state: AgentState, tool_node: ToolNode) -> dict:
     }
 
 
-def build_agent_graph(tools: list, model_name: str = "claude-sonnet-4-20250514") -> StateGraph:
+def build_agent_graph(tools: list, model_name: str = "claude-sonnet-5-5") -> StateGraph:
     """Construct the LangGraph agent with the given tools.
 
     Args:
