@@ -678,7 +678,16 @@ class ServedModelResponse(BaseModel):
     load_seconds: float
 
 
+class ServingRuntime(BaseModel):
+    """Compute the API process runs on."""
+
+    cpu_count: int
+    cpu_limit: float | None
+    torch_threads: int
+
+
 class ServedModelListResponse(BaseModel):
-    """All models currently loaded for serving."""
+    """All models currently loaded for serving, plus the runtime serving them."""
 
     models: list[ServedModelResponse]
+    runtime: ServingRuntime
