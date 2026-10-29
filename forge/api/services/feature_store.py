@@ -20,6 +20,7 @@ from forge.api.models.database import (
     FeatureSet,
     FeatureStoreRegistry,
 )
+from forge.api.services.data_ingestion import load_dataset_frame
 from forge.api.services.feature_eng import (
     compute_bollinger_bands,
     compute_macd,
@@ -157,7 +158,9 @@ def compute_features(
 
     try:
         # Load raw dataset
-        raw_df = pd.read_parquet(dataset.s3_path)
+        raw_df = load_dataset_frame(dataset)
+        if raw_df is None:
+            raise ValueError(f"Dataset parquet not found at {dataset.s3_path}")
         close = raw_df["Close"].values.astype(np.float64)
 
         result_df = raw_df[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()

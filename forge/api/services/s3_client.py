@@ -210,6 +210,31 @@ def upload_dataset_artifact(
         return None
 
 
+def download_dataset_artifact(dataset_id: UUID, filename: str, destination: Path) -> bool:
+    """Restore a dataset file uploaded by upload_dataset_artifact to local disk.
+
+    Args:
+        dataset_id: The dataset UUID used in the S3 key path.
+        filename: The uploaded file's name (e.g. '<id>.parquet').
+        destination: Local path to write the file to.
+
+    Returns:
+        True if the file was downloaded, False if S3 is disabled or it isn't there.
+    """
+    if not _S3_AVAILABLE:
+        return False
+
+    s3_key = f"datasets/{dataset_id}/{filename}"
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        _s3_client.download_file(_S3_BUCKET, s3_key, str(destination))
+        logger.info("Restored dataset %s from s3://%s/%s", dataset_id, _S3_BUCKET, s3_key)
+        return True
+    except (ClientError, NoCredentialsError):
+        logger.warning("Dataset %s not available in S3 at %s", dataset_id, s3_key)
+        return False
+
+
 def generate_presigned_url(
     s3_path: str,
     expiry_seconds: int = 3600,

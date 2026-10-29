@@ -6,7 +6,6 @@ using statistical tests (KS, PSI) implemented with scipy.stats.
 
 import logging
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from uuid import UUID
 
 import numpy as np
@@ -19,6 +18,7 @@ from forge.api.models.database import (
     DriftReport,
     ModelVersion,
 )
+from forge.api.services.data_ingestion import load_dataset_frame
 from forge.api.services.metrics import DRIFT_SCORE
 
 logger = logging.getLogger(__name__)
@@ -51,9 +51,9 @@ def _to_native(obj: object) -> object:
 
 def _load_features(dataset: Dataset) -> pd.DataFrame:
     """Load dataset parquet and return only numeric feature columns."""
-    if not dataset.s3_path or not Path(dataset.s3_path).exists():
+    df = load_dataset_frame(dataset)
+    if df is None:
         raise ValueError(f"Dataset parquet not found at {dataset.s3_path}")
-    df = pd.read_parquet(dataset.s3_path)
     feature_cols = [c for c in df.columns if c not in EXCLUDE_COLS]
     return df[feature_cols].select_dtypes(include=[np.number])
 
