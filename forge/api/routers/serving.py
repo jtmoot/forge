@@ -1,0 +1,106 @@
+"""Serving router — online predictions from production-stage registry models."""
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from forge.api.models.database import get_db
+from forge.api.models.schemas import (
+    Prediction,
+    PredictRequest,
+    PredictResponse,
+    ServedModelListResponse,
+    ServedModelResponse,
+)
+from forge.api.services.model_server import (
+    InvalidInputError,
+    ModelArtifactError,
+    ModelNotFoundError,
+    ServableModel,
+    ServingError,
+    get_production_servable,
+    model_cache,
+    run_inference,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/serve", tags=["serving"])
+
+_STATUS_FOR_ERROR: dict[type[ServingError], int] = {
+    ModelNotFoundError: status.HTTP_404_NOT_FOUND,
+    ModelArtifactError: status.HTTP_409_CONFLICT,
+    InvalidInputError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+}
+
+
+def _to_http_error(exc: ServingError) -> HTTPException:
+    """Map a serving error to the matching HTTP status."""
+    return HTTPException(
+        status_code=_STATUS_FOR_ERROR.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR),
+        detail=str(exc),
+    )
+
+
+def _describe(servable: ServableModel) -> ServedModelResponse:
+    """Build the API description of a loaded model."""
+    return ServedModelResponse(
+        model_name=servable.name,
+        version=servable.version,
+        run_id=servable.run_id,
+        model_type=servable.model_type,
+        backend=servable.backend,
+        input_shape=list(servable.input_shape),
+        feature_names=servable.feature_names,
+        loaded_at=servable.loaded_at,
+        load_seconds=servable.load_seconds,
+    )
+
+
+@router.get("", response_model=ServedModelListResponse)
+def list_served_models() -> ServedModelListResponse:
+    """List models currently loaded in the serving cache."""
+    return ServedModelListResponse(models=[_describe(s) for s in model_cache.loaded()])
+
+
+@router.get("/{model_name}", response_model=ServedModelResponse)
+def get_served_model(
+    model_name: str,
+    db: Session = Depends(get_db),
+) -> ServedModelResponse:
+    """Load (if needed) and describe the production version of a model.
+
+    Also useful as a warm-up call before sending traffic.
+    """
+    try:
+        servable = get_production_servable(db, model_name)
+    except ServingError as exc:
+        raise _to_http_error(exc) from exc
+    return _describe(servable)
+
+
+@router.post("/{model_name}/predict", response_model=PredictResponse)
+def predict(
+    model_name: str,
+    request: PredictRequest,
+    db: Session = Depends(get_db),
+) -> PredictResponse:
+    """Run inference with the model's current production version."""
+    try:
+        servable = get_production_servable(db, model_name)
+        result = run_inference(servable, request.inputs)
+    except ServingError as exc:
+        raise _to_http_error(exc) from exc
+
+    return PredictResponse(
+        model_name=servable.name,
+        version=servable.version,
+        model_type=servable.model_type,
+        backend=servable.backend,
+        predictions=[
+            Prediction(probability=prob, label=label)
+            for prob, label in zip(result.probabilities, result.labels, strict=True)
+        ],
+        latency_ms=result.latency_ms,
+    )

@@ -746,8 +746,15 @@ def run_experiment_run(run_id: UUID, db: Session) -> Run:
         }
         tracker.log_final_results(metrics, profiling_dict)
 
-        # Upload model artifact to S3
-        s3_path = upload_model_artifact(model, run_id, model_type)
+        # Upload model artifact plus the metadata needed to rebuild it for serving
+        artifact_metadata = {
+            "model_type": model_type,
+            "input_size": int(x_train.shape[1]),
+            "window_size": window_size,
+            "feature_names": [c for c in train_df.columns if c not in EXCLUDE_COLS],
+            "hyperparameters": hyperparams,
+        }
+        s3_path = upload_model_artifact(model, run_id, model_type, artifact_metadata)
 
         # Finish W&B run and capture run ID
         wandb_run_id = tracker.finish()

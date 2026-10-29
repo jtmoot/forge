@@ -62,6 +62,29 @@ MODEL_REGISTRY_VERSIONS = Gauge(
 )
 
 # ---------------------------------------------------------------------------
+# Serving metrics
+# ---------------------------------------------------------------------------
+
+SERVING_REQUEST_SECONDS = Histogram(
+    "forge_serving_request_seconds",
+    "Model inference time per serving request",
+    ["model", "version", "backend"],
+    buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
+
+SERVING_MODEL_LOADS_TOTAL = Counter(
+    "forge_serving_model_loads_total",
+    "Model loads into the serving cache",
+    ["model", "status"],
+)
+
+SERVING_CACHE_HITS_TOTAL = Counter(
+    "forge_serving_cache_hits_total",
+    "Serving requests answered by an already-loaded model",
+    ["model"],
+)
+
+# ---------------------------------------------------------------------------
 # Ops metrics
 # ---------------------------------------------------------------------------
 

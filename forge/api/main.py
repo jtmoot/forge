@@ -19,6 +19,7 @@ from forge.api.routers import (
     model_registry,
     ops,
     projects,
+    serving,
     webhooks,
 )
 
@@ -66,6 +67,7 @@ app.include_router(projects.router)
 app.include_router(analysis.router)
 app.include_router(feature_store.router)
 app.include_router(model_registry.router)
+app.include_router(serving.router)
 app.include_router(drift.router)
 app.include_router(metrics.router)
 
