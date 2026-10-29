@@ -39,6 +39,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/models", label: "Registry", icon: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" },
       { href: "/drift", label: "Drift", icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" },
+      { href: "/serving", label: "Serving", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
     ],
   },
   {
