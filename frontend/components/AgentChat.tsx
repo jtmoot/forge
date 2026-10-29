@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { sendAgentQuery, type IntermediateResult } from "@/lib/api";
+import AgentMarkdown from "@/components/AgentMarkdown";
 
 interface ChatMessage {
   role: "user" | "agent";
@@ -117,7 +118,11 @@ export default function AgentChat() {
                   : "bg-forge-card border border-forge-border text-forge-text"
               }`}
             >
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              {msg.role === "agent" ? (
+                <AgentMarkdown content={msg.content} />
+              ) : (
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              )}
 
               {/* Copy button for agent messages */}
               {msg.role === "agent" && (
