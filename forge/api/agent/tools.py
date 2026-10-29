@@ -6,6 +6,7 @@ in the PostgreSQL database and return formatted results.
 
 import json
 import logging
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from forge.api.models.database import Experiment, OpsLog, Run, ServingBenchmark
 from forge.api.services.embeddings import search_similar_runs
+from forge.api.services.model_server import model_cache
 from forge.api.services.serving_bench import recommend_config
 
 logger = logging.getLogger(__name__)
@@ -434,11 +436,23 @@ def _brief_cell(cell: dict | None) -> dict | None:
     return {field: cell.get(field) for field in _CELL_FIELDS}
 
 
-def summarize_serving_benchmark(benchmark: ServingBenchmark, slo_p99_ms: float) -> dict:
+def _recommended_parity(best: dict | None, parity: dict | None) -> dict | None:
+    """ONNX parity (accuracy vs the native model) for the recommended backend."""
+    if best is None:
+        return None
+    if best["backend"] in _NATIVE_BACKENDS:
+        return {"backend": best["backend"], "native": True}
+    return (parity or {}).get(best["backend"])
+
+
+def summarize_serving_benchmark(
+    benchmark: ServingBenchmark, slo_p99_ms: float, parity: dict | None = None
+) -> dict:
     """Summarize a benchmark against a p99 SLO, with a naive-serving baseline for context.
 
     The baseline is the native backend with batching off at the recommended
     config's concurrency, so the answer can say how much the optimizations buy.
+    Parity comes from the benchmark's params, else from ``parity`` (the loaded model's).
     """
     cells = benchmark.results or []
     recommendation = recommend_config(cells, slo_p99_ms, top=3)
@@ -475,6 +489,9 @@ def summarize_serving_benchmark(benchmark: ServingBenchmark, slo_p99_ms: float) 
         "baseline": _brief_cell(baseline),
         "throughput_vs_baseline": speedup,
         "cells_considered": recommendation["cells_considered"],
+        "recommended_parity": _recommended_parity(
+            best, (benchmark.params or {}).get("parity") or parity
+        ),
     }
 
 
@@ -502,7 +519,17 @@ def make_find_serving_config_tool(db: Session):
                 "error": f"No completed serving benchmark for {target}",
                 "hint": "Run POST /api/serve/{model_name}/benchmarks first",
             })
-        return json.dumps(summarize_serving_benchmark(benchmark, slo_p99_ms), indent=2, default=str)
+        loaded = next(
+            (
+                s for s in model_cache.loaded()
+                if s.name == benchmark.model_name and s.version == benchmark.model_version
+            ),
+            None,
+        )
+        loaded_parity = {name: asdict(result) for name, result in loaded.parity.items()} if loaded else None
+        return json.dumps(
+            summarize_serving_benchmark(benchmark, slo_p99_ms, loaded_parity), indent=2, default=str
+        )
 
     return find_serving_config
 

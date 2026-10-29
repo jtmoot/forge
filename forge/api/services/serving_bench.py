@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -375,7 +375,11 @@ async def execute_benchmark(benchmark_id: UUID, grid: BenchmarkGrid) -> None:
 
         benchmark.model_version = servable.version
         benchmark.status = "completed"
-        benchmark.params = {**grid.to_params(), "input_samples": len(inputs)}
+        benchmark.params = {
+            **grid.to_params(),
+            "input_samples": len(inputs),
+            "parity": {name: asdict(result) for name, result in servable.parity.items()},
+        }
     except Exception as exc:  # any failure must leave the row failed, not stuck running
         logger.exception("Benchmark %s failed", benchmark_id)
         db.rollback()
