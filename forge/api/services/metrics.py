@@ -84,6 +84,26 @@ SERVING_CACHE_HITS_TOTAL = Counter(
     ["model"],
 )
 
+SERVING_BATCH_SIZE = Histogram(
+    "forge_serving_batch_size",
+    "Rows per micro-batched forward pass",
+    ["model"],
+    buckets=(1, 2, 4, 8, 16, 32, 64, 128, 256, 512),
+)
+
+SERVING_QUEUE_DEPTH = Gauge(
+    "forge_serving_queue_depth",
+    "Requests waiting in the micro-batch queue",
+    ["model"],
+)
+
+SERVING_QUEUE_WAIT_SECONDS = Histogram(
+    "forge_serving_queue_wait_seconds",
+    "Time a request waits in the micro-batch queue before its forward pass",
+    ["model"],
+    buckets=(0.0001, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25),
+)
+
 # ---------------------------------------------------------------------------
 # Ops metrics
 # ---------------------------------------------------------------------------

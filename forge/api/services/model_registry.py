@@ -19,7 +19,7 @@ from forge.api.models.database import (
     Run,
 )
 from forge.api.services.metrics import MODEL_REGISTRY_VERSIONS
-from forge.api.services.model_server import model_cache
+from forge.api.services.model_server import evict_model
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ def transition_stage(
     # Hot swap: the serving cache holds the production version, so any change
     # to which version is in production evicts it; the next request reloads.
     if model is not None and "production" in (current_stage, new_stage):
-        model_cache.evict(model.name)
+        evict_model(model.name)
     return mv
 
 

@@ -3,10 +3,13 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from forge.api.models.database import get_db
 from forge.api.models.schemas import (
+    BatchConfigRequest,
+    BatchConfigResponse,
     Prediction,
     PredictRequest,
     PredictResponse,
@@ -14,15 +17,18 @@ from forge.api.models.schemas import (
     ServedModelResponse,
     ServingRuntime,
 )
+from forge.api.services.batcher import BatchConfig
 from forge.api.services.model_server import (
     InvalidInputError,
     ModelArtifactError,
     ModelNotFoundError,
     ServableModel,
     ServingError,
+    get_batch_config,
     get_production_servable,
+    infer,
     model_cache,
-    run_inference,
+    set_batch_config,
 )
 from forge.api.services.runtime import runtime_info
 
@@ -45,6 +51,16 @@ def _to_http_error(exc: ServingError) -> HTTPException:
     )
 
 
+def _batching(name: str, config: BatchConfig) -> BatchConfigResponse:
+    """Build the API description of a batching policy."""
+    return BatchConfigResponse(
+        model_name=name,
+        max_batch_size=config.max_batch_size,
+        max_wait_ms=config.max_wait_ms,
+        enabled=config.enabled,
+    )
+
+
 def _describe(servable: ServableModel) -> ServedModelResponse:
     """Build the API description of a loaded model."""
     return ServedModelResponse(
@@ -57,6 +73,7 @@ def _describe(servable: ServableModel) -> ServedModelResponse:
         feature_names=servable.feature_names,
         loaded_at=servable.loaded_at,
         load_seconds=servable.load_seconds,
+        batching=_batching(servable.name, get_batch_config(servable.name)),
     )
 
 
@@ -85,16 +102,34 @@ def get_served_model(
     return _describe(servable)
 
 
+@router.get("/{model_name}/batching", response_model=BatchConfigResponse)
+def get_batching(model_name: str) -> BatchConfigResponse:
+    """Return a model's micro-batching policy."""
+    return _batching(model_name, get_batch_config(model_name))
+
+
+@router.put("/{model_name}/batching", response_model=BatchConfigResponse)
+def update_batching(model_name: str, request: BatchConfigRequest) -> BatchConfigResponse:
+    """Change a model's micro-batching policy; in-flight requests finish under the old one."""
+    config = set_batch_config(
+        model_name, BatchConfig(request.max_batch_size, request.max_wait_ms)
+    )
+    return _batching(model_name, config)
+
+
 @router.post("/{model_name}/predict", response_model=PredictResponse)
-def predict(
+async def predict(
     model_name: str,
     request: PredictRequest,
     db: Session = Depends(get_db),
 ) -> PredictResponse:
-    """Run inference with the model's current production version."""
+    """Run inference with the model's current production version.
+
+    Concurrent requests are micro-batched per the model's batching policy.
+    """
     try:
-        servable = get_production_servable(db, model_name)
-        result = run_inference(servable, request.inputs)
+        servable = await run_in_threadpool(get_production_servable, db, model_name)
+        result = await infer(servable, request.inputs)
     except ServingError as exc:
         raise _to_http_error(exc) from exc
 
