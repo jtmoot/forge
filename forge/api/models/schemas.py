@@ -664,6 +664,22 @@ class PredictResponse(BaseModel):
     latency_ms: float
 
 
+class BatchConfigRequest(BaseModel):
+    """Request body for PUT /api/serve/{model_name}/batching. max_batch_size=1 disables batching."""
+
+    max_batch_size: int = Field(..., ge=1, le=1024)
+    max_wait_ms: float = Field(..., ge=0, le=1000)
+
+
+class BatchConfigResponse(BaseModel):
+    """A model's micro-batching policy."""
+
+    model_name: str
+    max_batch_size: int
+    max_wait_ms: float
+    enabled: bool
+
+
 class ServedModelResponse(BaseModel):
     """A model loaded into the serving cache."""
 
@@ -676,6 +692,7 @@ class ServedModelResponse(BaseModel):
     feature_names: list[str]
     loaded_at: datetime
     load_seconds: float
+    batching: BatchConfigResponse
 
 
 class ServingRuntime(BaseModel):

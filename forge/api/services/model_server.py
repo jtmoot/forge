@@ -7,8 +7,10 @@ version evicts the cache entry so the next request loads the new version
 without a restart.
 """
 
+import asyncio
 import io
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -23,6 +25,7 @@ from sqlalchemy.orm import Session
 from torch import nn
 
 from forge.api.models.database import ModelVersion, RegisteredModel, Run
+from forge.api.services.batcher import BatchConfig, BatcherPool, MicroBatcher
 from forge.api.services.metrics import (
     SERVING_CACHE_HITS_TOTAL,
     SERVING_MODEL_LOADS_TOTAL,
@@ -233,12 +236,38 @@ def prepare_inputs(servable: ServableModel, raw_inputs: list) -> np.ndarray:
 
 
 def run_inference(servable: ServableModel, raw_inputs: list) -> InferenceResult:
-    """Validate inputs, run the model, and record serving latency."""
+    """Validate inputs, run the model synchronously, and record serving latency."""
     inputs = prepare_inputs(servable, raw_inputs)
     start = time.perf_counter()
     probabilities = predict_proba(servable, inputs)
-    elapsed = time.perf_counter() - start
+    return _record_result(servable, probabilities, time.perf_counter() - start)
 
+
+async def infer(servable: ServableModel, raw_inputs: list) -> InferenceResult:
+    """Validate inputs and predict, through the model's micro-batcher when enabled.
+
+    The recorded latency is server-side end to end: queue wait plus forward pass.
+    """
+    inputs = prepare_inputs(servable, raw_inputs)
+    config = get_batch_config(servable.name)
+    start = time.perf_counter()
+    if config.enabled:
+        batcher = batcher_pool.get_or_create(
+            (servable.name, servable.version, servable.backend),
+            lambda: MicroBatcher(
+                lambda batch: predict_proba(servable, batch), config, label=servable.name
+            ),
+        )
+        probabilities = await batcher.submit(inputs)
+    else:
+        probabilities = await asyncio.to_thread(predict_proba, servable, inputs)
+    return _record_result(servable, probabilities, time.perf_counter() - start)
+
+
+def _record_result(
+    servable: ServableModel, probabilities: np.ndarray, elapsed: float
+) -> InferenceResult:
+    """Observe serving latency and package probabilities with thresholded labels."""
     SERVING_REQUEST_SECONDS.labels(
         model=servable.name, version=str(servable.version), backend=servable.backend
     ).observe(elapsed)
@@ -308,6 +337,36 @@ class ModelCache:
 
 
 model_cache = ModelCache()
+
+
+# ---------------------------------------------------------------------------
+# Micro-batching configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_BATCH_CONFIG = BatchConfig(
+    max_batch_size=int(os.getenv("FORGE_SERVE_MAX_BATCH", "32")),
+    max_wait_ms=float(os.getenv("FORGE_SERVE_MAX_WAIT_MS", "2")),
+)
+_batch_configs: dict[str, BatchConfig] = {}
+batcher_pool = BatcherPool()
+
+
+def get_batch_config(name: str) -> BatchConfig:
+    """Return the micro-batching policy for a model (the default unless overridden)."""
+    return _batch_configs.get(name, DEFAULT_BATCH_CONFIG)
+
+
+def set_batch_config(name: str, config: BatchConfig) -> BatchConfig:
+    """Override a model's batching policy; running batchers drain and are replaced."""
+    _batch_configs[name] = config
+    batcher_pool.retire_model(name)
+    return config
+
+
+def evict_model(name: str) -> None:
+    """Hot swap: drop the cached model and retire its batchers (queued requests still finish)."""
+    model_cache.evict(name)
+    batcher_pool.retire_model(name)
 
 
 # ---------------------------------------------------------------------------
