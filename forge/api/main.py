@@ -9,7 +9,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
-from sqlalchemy.exc import SQLAlchemyError
 
 from forge.api.models.database import SessionLocal
 from forge.api.routers import (
@@ -41,8 +40,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = SessionLocal()
     try:
         recover_orphaned_runs(db)
-    except SQLAlchemyError:
+    except Exception:  # recovery is housekeeping; it must never stop the API from starting
         logger.exception("Could not recover orphaned runs at startup")
+        db.rollback()
     finally:
         db.close()
     yield

@@ -46,6 +46,8 @@ def recover_orphaned_runs(db: Session) -> int:
     for run in orphaned:
         run.status = "failed"
         run.completed_at = now
+    # The session doesn't autoflush; flush so the status query below sees the updates
+    db.flush()
 
     stuck_experiments = db.query(Experiment).filter(Experiment.status == "running").all()
     for experiment in stuck_experiments:
