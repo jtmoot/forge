@@ -1,13 +1,15 @@
 """Serving router — online predictions from production-stage registry models."""
 
 import logging
+from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from forge.api.models.database import get_db
 from forge.api.models.schemas import (
+    BackendParity,
     BatchConfigRequest,
     BatchConfigResponse,
     Prediction,
@@ -69,10 +71,13 @@ def _describe(servable: ServableModel) -> ServedModelResponse:
         run_id=servable.run_id,
         model_type=servable.model_type,
         backend=servable.backend,
+        backends=list(servable.backends),
+        parity=[BackendParity(**asdict(result)) for result in servable.parity.values()],
         input_shape=list(servable.input_shape),
         feature_names=servable.feature_names,
         loaded_at=servable.loaded_at,
         load_seconds=servable.load_seconds,
+        onnx_build_seconds=servable.onnx_build_seconds,
         batching=_batching(servable.name, get_batch_config(servable.name)),
     )
 
@@ -121,6 +126,10 @@ def update_batching(model_name: str, request: BatchConfigRequest) -> BatchConfig
 async def predict(
     model_name: str,
     request: PredictRequest,
+    backend: str | None = Query(
+        default=None,
+        description="Inference backend, e.g. onnxruntime or onnxruntime-int8; defaults to the native one",
+    ),
     db: Session = Depends(get_db),
 ) -> PredictResponse:
     """Run inference with the model's current production version.
@@ -129,7 +138,7 @@ async def predict(
     """
     try:
         servable = await run_in_threadpool(get_production_servable, db, model_name)
-        result = await infer(servable, request.inputs)
+        result = await infer(servable, request.inputs, backend)
     except ServingError as exc:
         raise _to_http_error(exc) from exc
 
@@ -137,7 +146,7 @@ async def predict(
         model_name=servable.name,
         version=servable.version,
         model_type=servable.model_type,
-        backend=servable.backend,
+        backend=result.backend,
         predictions=[
             Prediction(probability=prob, label=label)
             for prob, label in zip(result.probabilities, result.labels, strict=True)
