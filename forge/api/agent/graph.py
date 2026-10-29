@@ -9,8 +9,8 @@ import logging
 import os
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
@@ -97,7 +97,7 @@ def _call_tools(state: AgentState, tool_node: ToolNode) -> dict:
     }
 
 
-def build_agent_graph(tools: list, model_name: str = "claude-sonnet-4-20250514") -> StateGraph:
+def build_agent_graph(tools: list, model_name: str = "claude-sonnet-5-5") -> StateGraph:
     """Construct the LangGraph agent with the given tools.
 
     Args:

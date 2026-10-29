@@ -1,9 +1,8 @@
 """Ops monitoring endpoints — log ingestion, querying, and summary."""
 
 from datetime import datetime
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func as sql_func
 from sqlalchemy.orm import Session
 

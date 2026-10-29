@@ -6,11 +6,10 @@ in the PostgreSQL database and return formatted results.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from langchain_core.tools import tool
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from forge.api.models.database import Experiment, OpsLog, Run
@@ -163,7 +162,7 @@ def make_get_ops_summary_tool(db: Session):
     def get_ops_summary(hours: int = 24) -> str:
         """Summarize ops activity for the given time period (default: last 24 hours).
         Returns log counts by project and level, total cost, and any anomalies."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
 
         logs = db.query(OpsLog).filter(OpsLog.created_at >= cutoff).all()
 
@@ -301,7 +300,7 @@ def make_query_model_registry_tool(db: Session):
         The query can be a model name, 'all' to list everything, or 'production'
         to show only production models."""
         from forge.api.models.database import ModelVersion, RegisteredModel
-        from forge.api.services.model_registry import list_models, get_model_history
+        from forge.api.services.model_registry import get_model_history, list_models
 
         if query.lower() in ("all", "list", ""):
             models = list_models(db)
@@ -377,8 +376,11 @@ def make_check_drift_tool(db: Session):
         """Check for data or model drift. Use for questions like 'is SPY data drifting?',
         'which features are most unstable?', or 'should I retrain the production model?'.
         Pass a dataset name, 'summary', or 'all' to get drift reports."""
-        from forge.api.services.drift_detection import get_drift_summary, list_drift_reports
-        from forge.api.models.database import Dataset, DriftReport
+        from forge.api.models.database import Dataset
+        from forge.api.services.drift_detection import (
+            get_drift_summary,
+            list_drift_reports,
+        )
 
         if query.lower() in ("summary", "all", ""):
             summary = get_drift_summary(db)

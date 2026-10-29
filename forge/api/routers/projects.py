@@ -1,9 +1,9 @@
 """Router for project aggregation and activity feed endpoints."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, case, text
+from sqlalchemy import case, func, text
 from sqlalchemy.orm import Session
 
 from forge.api.models.database import (
@@ -51,7 +51,7 @@ async def list_projects(db: Session = Depends(get_db)) -> ProjectListResponse:
     Uses two GROUP BY queries (one for ops_logs, one for git_events) instead
     of N+1 per-project queries, then merges the results in Python.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     seven_days_ago = now - timedelta(days=7)
     twenty_four_hours_ago = now - timedelta(hours=24)
 
@@ -330,7 +330,7 @@ async def get_dashboard_summary(
     db: Session = Depends(get_db),
 ) -> DashboardSummaryResponse:
     """Aggregate stats for the dashboard home: total projects, active experiments, alerts, weekly cost."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     seven_days_ago = now - timedelta(days=7)
     twenty_four_hours_ago = now - timedelta(hours=24)
 

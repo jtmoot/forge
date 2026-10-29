@@ -1,21 +1,29 @@
 """Experiments router — create, list, detail, and trigger training runs."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from forge.api.models.database import Dataset, Experiment, FeatureSet, Run, RunEnvironment, SessionLocal, get_db
+from forge.api.models.database import (
+    Dataset,
+    Experiment,
+    FeatureSet,
+    Run,
+    RunEnvironment,
+    SessionLocal,
+    get_db,
+)
 from forge.api.models.schemas import (
     EnvironmentDiffResponse,
     ExperimentCreateRequest,
     ExperimentDetailResponse,
     ExperimentListResponse,
     ExperimentResponse,
-    ReproducibilityReport,
     ReproduceResponse,
+    ReproducibilityReport,
     RunEnvironmentResponse,
     RunResponse,
 )
@@ -194,7 +202,7 @@ def _execute_runs_in_background(experiment_id: UUID, run_ids: list[UUID]) -> Non
             experiment.status = "failed"
         elif "pending" in statuses:
             experiment.status = "partial"
-        experiment.updated_at = datetime.now(timezone.utc)
+        experiment.updated_at = datetime.now(UTC)
         db.commit()
     finally:
         db.close()
@@ -229,7 +237,7 @@ def trigger_experiment_runs(
 
     # Update experiment status and return immediately
     experiment.status = "running"
-    experiment.updated_at = datetime.now(timezone.utc)
+    experiment.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(experiment)
 

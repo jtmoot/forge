@@ -1,6 +1,5 @@
 """Unit tests for anomaly detection service."""
 
-import pytest
 
 from forge.api.services.anomaly import compute_rolling_zscores, flag_anomalies
 

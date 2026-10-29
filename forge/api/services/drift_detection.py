@@ -5,7 +5,7 @@ using statistical tests (KS, PSI) implemented with scipy.stats.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -352,7 +352,7 @@ def get_drift_summary(
     days: int = 30,
 ) -> dict:
     """Aggregate recent drift reports into a summary."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     query = db.query(DriftReport).filter(DriftReport.created_at >= cutoff)
     if dataset_id:
