@@ -20,6 +20,7 @@ from torch import nn
 from xgboost import XGBClassifier
 
 from forge.api.models.database import Dataset, Experiment, Run
+from forge.api.services.data_ingestion import load_dataset_frame
 from forge.api.services.embeddings import embed_run
 from forge.api.services.metrics import (
     EXPERIMENTS_TOTAL,
@@ -700,7 +701,9 @@ def run_experiment_run(run_id: UUID, db: Session) -> Run:
             logger.info("Loading features from feature store (fs=%s, ds=%s)", run.feature_set_id, experiment.dataset_id)
             df = get_features(db, run.feature_set_id, experiment.dataset_id)
         else:
-            df = pd.read_parquet(dataset.s3_path)
+            df = load_dataset_frame(dataset)
+            if df is None:
+                raise ValueError(f"Dataset parquet not found at {dataset.s3_path}")
         df = create_target(df)
 
         # Reproducibility: compute and store data version hash

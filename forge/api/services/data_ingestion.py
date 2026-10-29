@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 from forge.api.models.database import Dataset
 from forge.api.services.feature_eng import compute_all_features
 from forge.api.services.metrics import DATA_INGESTION_ROWS_TOTAL
+from forge.api.services.s3_client import (
+    download_dataset_artifact,
+    upload_dataset_artifact,
+)
 
 DATA_DIR = Path(os.getenv("FORGE_DATA_DIR", "data/datasets"))
 
@@ -110,6 +114,8 @@ def ingest_dataset(
     parquet_path = DATA_DIR / f"{dataset.id}.parquet"
     combined.to_parquet(parquet_path, index=False)
     dataset.s3_path = str(parquet_path)
+    # Local disk is ephemeral on Railway; keep a durable copy in S3 when configured
+    upload_dataset_artifact(str(parquet_path), dataset.id)
 
     session.commit()
     session.refresh(dataset)
@@ -128,12 +134,26 @@ def list_datasets(session: Session) -> list[Dataset]:
     )
 
 
+def load_dataset_frame(dataset: Dataset) -> pd.DataFrame | None:
+    """Load a dataset's parquet, restoring it from S3 if the local copy is gone.
+
+    Returns None when the file exists neither locally nor in S3.
+    """
+    if not dataset.s3_path:
+        return None
+    local_path = Path(dataset.s3_path)
+    if not local_path.exists() and not download_dataset_artifact(
+        dataset.id, local_path.name, local_path
+    ):
+        return None
+    return pd.read_parquet(local_path)
+
+
 def get_feature_summary(dataset: Dataset) -> dict | None:
     """Load the parquet file and compute summary stats for feature columns."""
-    if not dataset.s3_path or not Path(dataset.s3_path).exists():
+    df = load_dataset_frame(dataset)
+    if df is None:
         return None
-
-    df = pd.read_parquet(dataset.s3_path)
     feature_cols = dataset.feature_columns or []
 
     # Only summarize columns that exist in the parquet and are numeric
