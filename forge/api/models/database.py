@@ -247,6 +247,23 @@ class DriftReport(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class ServingBenchmark(Base):
+    """Load-test results for a served model: latency/throughput per backend x batching x concurrency."""
+
+    __tablename__ = "serving_benchmarks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
+    model_name = Column(String(255), nullable=False, index=True)
+    model_version = Column(Integer, nullable=False)
+    status = Column(String(20), nullable=False, server_default="running")  # running, completed, failed
+    params = Column(JSONB)  # grid: backends, batch configs, concurrency levels, requests per cell
+    runtime = Column(JSONB)  # cpu_count, cpu_limit, torch_threads at run time
+    results = Column(JSONB)  # list of per-cell results, appended as cells finish
+    error = Column(Text)
+    started_at = Column(DateTime, server_default=func.now())
+    completed_at = Column(DateTime)
+
+
 class OpsLog(Base):
     """Ops monitoring: agent/project logs."""
 
