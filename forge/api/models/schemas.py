@@ -629,3 +629,56 @@ class AgentQueryResponse(BaseModel):
     answer: str
     tools_used: list[str] = Field(default_factory=list)
     intermediate_results: list[IntermediateResult] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Serving schemas
+# ---------------------------------------------------------------------------
+
+
+class PredictRequest(BaseModel):
+    """Request body for POST /api/serve/{model_name}/predict.
+
+    Tabular models take rows of features ``[batch, n_features]``; sequence
+    models take windows ``[batch, window_size, n_features]``.
+    """
+
+    inputs: list[list[float] | list[list[float]]] = Field(..., min_length=1, max_length=1024)
+
+
+class Prediction(BaseModel):
+    """One model output: positive-class probability and thresholded label."""
+
+    probability: float
+    label: int
+
+
+class PredictResponse(BaseModel):
+    """Predictions from the model's current production version."""
+
+    model_name: str
+    version: int
+    model_type: str
+    backend: str
+    predictions: list[Prediction]
+    latency_ms: float
+
+
+class ServedModelResponse(BaseModel):
+    """A model loaded into the serving cache."""
+
+    model_name: str
+    version: int
+    run_id: UUID
+    model_type: str
+    backend: str
+    input_shape: list[int]
+    feature_names: list[str]
+    loaded_at: datetime
+    load_seconds: float
+
+
+class ServedModelListResponse(BaseModel):
+    """All models currently loaded for serving."""
+
+    models: list[ServedModelResponse]

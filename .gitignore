@@ -46,5 +46,6 @@ PROBLEMS.md
 # Local data artifacts
 data/datasets/
 data/features/
+data/artifacts/
 wandb/
 *.parquet
