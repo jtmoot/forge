@@ -12,8 +12,9 @@ from uuid import UUID
 from langchain_core.tools import tool
 from sqlalchemy.orm import Session
 
-from forge.api.models.database import Experiment, OpsLog, Run
+from forge.api.models.database import Experiment, OpsLog, Run, ServingBenchmark
 from forge.api.services.embeddings import search_similar_runs
+from forge.api.services.serving_bench import recommend_config
 
 logger = logging.getLogger(__name__)
 
@@ -422,6 +423,90 @@ def make_check_drift_tool(db: Session):
     return check_drift
 
 
+_NATIVE_BACKENDS = {"pytorch", "xgboost", "sklearn"}
+_CELL_FIELDS = ("backend", "max_batch_size", "max_wait_ms", "concurrency", "p50_ms", "p99_ms", "throughput_rps")
+
+
+def _brief_cell(cell: dict | None) -> dict | None:
+    """Keep the fields an answer needs from a benchmark cell."""
+    if cell is None:
+        return None
+    return {field: cell.get(field) for field in _CELL_FIELDS}
+
+
+def summarize_serving_benchmark(benchmark: ServingBenchmark, slo_p99_ms: float) -> dict:
+    """Summarize a benchmark against a p99 SLO, with a naive-serving baseline for context.
+
+    The baseline is the native backend with batching off at the recommended
+    config's concurrency, so the answer can say how much the optimizations buy.
+    """
+    cells = benchmark.results or []
+    recommendation = recommend_config(cells, slo_p99_ms, top=3)
+    best = recommendation["best"]
+
+    baseline = None
+    if best is not None:
+        baseline = next(
+            (
+                c for c in cells
+                if c["backend"] in _NATIVE_BACKENDS
+                and c["max_batch_size"] == 1
+                and c["concurrency"] == best["concurrency"]
+            ),
+            None,
+        )
+    speedup = (
+        round(best["throughput_rps"] / baseline["throughput_rps"], 2)
+        if best is not None and baseline is not None and baseline["throughput_rps"] > 0
+        else None
+    )
+    return {
+        "model_name": benchmark.model_name,
+        "model_version": benchmark.model_version,
+        "benchmark_id": str(benchmark.id),
+        "benchmarked_at": benchmark.completed_at,
+        "runtime": benchmark.runtime,
+        "latency_scope": (benchmark.params or {}).get("latency_scope"),
+        "slo_p99_ms": slo_p99_ms,
+        "meets_slo": recommendation["meets_slo"],
+        "recommended": _brief_cell(best),
+        "other_candidates": [_brief_cell(c) for c in recommendation["candidates"][1:]],
+        "closest": _brief_cell(recommendation["lowest_p99"]) if best is None else None,
+        "baseline": _brief_cell(baseline),
+        "throughput_vs_baseline": speedup,
+        "cells_considered": recommendation["cells_considered"],
+    }
+
+
+def make_find_serving_config_tool(db: Session):
+    """Create the find_serving_config tool bound to a DB session."""
+
+    @tool
+    def find_serving_config(slo_p99_ms: float, model_name: str = "") -> str:
+        """Find the serving config (backend, micro-batching, concurrency) with the highest
+        throughput whose p99 latency meets an SLO, from the latest load-test benchmark.
+
+        Args:
+            slo_p99_ms: p99 latency target in milliseconds (e.g. 20).
+            model_name: Served model name; empty means the most recently benchmarked model.
+        """
+        if slo_p99_ms <= 0:
+            return json.dumps({"error": "slo_p99_ms must be positive"})
+        query = db.query(ServingBenchmark).filter(ServingBenchmark.status == "completed")
+        if model_name:
+            query = query.filter(ServingBenchmark.model_name == model_name)
+        benchmark = query.order_by(ServingBenchmark.completed_at.desc()).first()
+        if benchmark is None:
+            target = f"'{model_name}'" if model_name else "any model"
+            return json.dumps({
+                "error": f"No completed serving benchmark for {target}",
+                "hint": "Run POST /api/serve/{model_name}/benchmarks first",
+            })
+        return json.dumps(summarize_serving_benchmark(benchmark, slo_p99_ms), indent=2, default=str)
+
+    return find_serving_config
+
+
 def build_tools(db: Session) -> list:
     """Build all agent tools bound to the given database session."""
     return [
@@ -432,4 +517,5 @@ def build_tools(db: Session) -> list:
         make_compute_efficiency_frontier_tool(db),
         make_query_model_registry_tool(db),
         make_check_drift_tool(db),
+        make_find_serving_config_tool(db),
     ]
