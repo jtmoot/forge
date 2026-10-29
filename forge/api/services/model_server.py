@@ -5,6 +5,10 @@ A registered model's production version is rebuilt from its stored artifact
 and kept in an in-process cache keyed by model name. Promoting a different
 version evicts the cache entry so the next request loads the new version
 without a restart.
+
+Each servable answers through its native backend (``pytorch``, ``xgboost``
+or ``sklearn``) and, when they pass a parity check against it, through ONNX
+Runtime fp32 and int8 backends built at load time (see onnx_backend.py).
 """
 
 import asyncio
@@ -31,6 +35,7 @@ from forge.api.services.metrics import (
     SERVING_MODEL_LOADS_TOTAL,
     SERVING_REQUEST_SECONDS,
 )
+from forge.api.services.onnx_backend import ParityResult, build_onnx_backends
 from forge.api.services.runtime import init_worker_thread
 from forge.api.services.s3_client import ArtifactNotFoundError, download_model_artifact
 from forge.api.services.training import (
@@ -131,9 +136,31 @@ def build_model(artifact_bytes: bytes, metadata: dict) -> object:
 # ---------------------------------------------------------------------------
 
 
+def _native_predictor(model: object) -> Callable[[np.ndarray], np.ndarray]:
+    """Return the native framework's positive-class predictor for a model."""
+    if isinstance(model, nn.Module):
+        def predict_torch(inputs: np.ndarray) -> np.ndarray:
+            with torch.inference_mode():
+                output = model(torch.from_numpy(inputs))
+            return output.reshape(-1).numpy()
+
+        return predict_torch
+
+    def predict_estimator(inputs: np.ndarray) -> np.ndarray:
+        return model.predict_proba(inputs)[:, 1]
+
+    return predict_estimator
+
+
 @dataclass
 class ServableModel:
-    """A loaded, warmed-up model ready to answer prediction requests."""
+    """A loaded, warmed-up model ready to answer prediction requests.
+
+    ``backend`` names the native (default) backend; ``backends`` maps every
+    servable backend name to its positive-class predictor and always contains
+    the native one. ``parity`` reports each ONNX backend's check, including
+    the ones held back.
+    """
 
     name: str
     version: int
@@ -145,6 +172,12 @@ class ServableModel:
     feature_names: list[str] = field(default_factory=list)
     loaded_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     load_seconds: float = 0.0
+    backends: dict[str, Callable[[np.ndarray], np.ndarray]] = field(default_factory=dict)
+    parity: dict[str, ParityResult] = field(default_factory=dict)
+    onnx_build_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.backends.setdefault(self.backend, _native_predictor(self.model))
 
 
 @dataclass
@@ -154,6 +187,7 @@ class InferenceResult:
     probabilities: list[float]
     labels: list[int]
     latency_ms: float
+    backend: str
 
 
 def _backend_for(model: object) -> str:
@@ -165,13 +199,33 @@ def _backend_for(model: object) -> str:
     return "sklearn"
 
 
-def predict_proba(servable: ServableModel, inputs: np.ndarray) -> np.ndarray:
-    """Return the positive-class probability for each input row or sequence."""
-    if isinstance(servable.model, nn.Module):
-        with torch.inference_mode():
-            output = servable.model(torch.from_numpy(inputs))
-        return output.reshape(-1).numpy()
-    return servable.model.predict_proba(inputs)[:, 1]
+def resolve_backend(servable: ServableModel, backend: str | None) -> str:
+    """Return the backend to use: the native one when ``backend`` is None.
+
+    Raises:
+        InvalidInputError: If the backend is unknown or not available for this model.
+    """
+    if backend is None:
+        return servable.backend
+    if backend not in servable.backends:
+        parity = servable.parity.get(backend)
+        why = f" ({parity.reason})" if parity is not None and parity.reason else ""
+        raise InvalidInputError(
+            f"Backend '{backend}' is not available for {servable.name}{why}; "
+            f"available: {', '.join(sorted(servable.backends))}"
+        )
+    return backend
+
+
+def predict_proba(
+    servable: ServableModel, inputs: np.ndarray, backend: str | None = None
+) -> np.ndarray:
+    """Return the positive-class probability for each input row or sequence.
+
+    Raises:
+        InvalidInputError: If ``backend`` is unknown or unavailable.
+    """
+    return servable.backends[resolve_backend(servable, backend)](inputs)
 
 
 def create_servable(
@@ -211,6 +265,15 @@ def create_servable(
     )
     # Warm-up pass so the first real request doesn't pay one-time init costs
     predict_proba(servable, np.zeros((1, *input_shape), dtype=np.float32))
+
+    # The parity check runs every ONNX session, which also warms them up
+    onnx_backends = build_onnx_backends(
+        model, model_type, input_shape, servable.backends[servable.backend]
+    )
+    for backend_name, session in onnx_backends.sessions.items():
+        servable.backends[backend_name] = session.predict_proba
+    servable.parity = onnx_backends.parity
+    servable.onnx_build_seconds = onnx_backends.total_seconds
     servable.load_seconds = time.perf_counter() - start
     return servable
 
@@ -236,50 +299,65 @@ def prepare_inputs(servable: ServableModel, raw_inputs: list) -> np.ndarray:
     return inputs
 
 
-def run_inference(servable: ServableModel, raw_inputs: list) -> InferenceResult:
-    """Validate inputs, run the model synchronously, and record serving latency."""
+def run_inference(
+    servable: ServableModel, raw_inputs: list, backend: str | None = None
+) -> InferenceResult:
+    """Validate inputs, run the model synchronously on ``backend`` (native if None).
+
+    Raises:
+        InvalidInputError: If the inputs are malformed or the backend is unavailable.
+    """
+    backend_name = resolve_backend(servable, backend)
     inputs = prepare_inputs(servable, raw_inputs)
     start = time.perf_counter()
-    probabilities = predict_proba(servable, inputs)
-    return _record_result(servable, probabilities, time.perf_counter() - start)
+    probabilities = predict_proba(servable, inputs, backend_name)
+    return _record_result(servable, probabilities, time.perf_counter() - start, backend_name)
 
 
-async def infer(servable: ServableModel, raw_inputs: list) -> InferenceResult:
-    """Validate inputs and predict, through the model's micro-batcher when enabled.
+async def infer(
+    servable: ServableModel, raw_inputs: list, backend: str | None = None
+) -> InferenceResult:
+    """Validate inputs and predict on ``backend``, micro-batched when enabled.
 
-    The recorded latency is server-side end to end: queue wait plus forward pass.
+    Each (model, version, backend) gets its own batcher. The recorded latency
+    is server-side end to end: queue wait plus forward pass.
+
+    Raises:
+        InvalidInputError: If the inputs are malformed or the backend is unavailable.
     """
+    backend_name = resolve_backend(servable, backend)
     inputs = prepare_inputs(servable, raw_inputs)
     config = get_batch_config(servable.name)
     start = time.perf_counter()
     if config.enabled:
         batcher = batcher_pool.get_or_create(
-            (servable.name, servable.version, servable.backend),
+            (servable.name, servable.version, backend_name),
             lambda: MicroBatcher(
-                lambda batch: predict_proba(servable, batch),
+                lambda batch: predict_proba(servable, batch, backend_name),
                 config,
-                label=servable.name,
+                label=f"{servable.name}/{backend_name}",
                 thread_initializer=init_worker_thread,
             ),
         )
         probabilities = await batcher.submit(inputs)
     else:
-        probabilities = await asyncio.to_thread(predict_proba, servable, inputs)
-    return _record_result(servable, probabilities, time.perf_counter() - start)
+        probabilities = await asyncio.to_thread(predict_proba, servable, inputs, backend_name)
+    return _record_result(servable, probabilities, time.perf_counter() - start, backend_name)
 
 
 def _record_result(
-    servable: ServableModel, probabilities: np.ndarray, elapsed: float
+    servable: ServableModel, probabilities: np.ndarray, elapsed: float, backend_name: str
 ) -> InferenceResult:
     """Observe serving latency and package probabilities with thresholded labels."""
     SERVING_REQUEST_SECONDS.labels(
-        model=servable.name, version=str(servable.version), backend=servable.backend
+        model=servable.name, version=str(servable.version), backend=backend_name
     ).observe(elapsed)
     probs = [float(p) for p in probabilities]
     return InferenceResult(
         probabilities=probs,
         labels=[int(p >= 0.5) for p in probs],
         latency_ms=elapsed * 1000.0,
+        backend=backend_name,
     )
 
 
@@ -323,7 +401,7 @@ class ModelCache:
             self._models[name] = servable
             logger.info(
                 "Loaded %s v%d for serving (%s, %.2fs)",
-                name, servable.version, servable.backend, servable.load_seconds,
+                name, servable.version, ", ".join(servable.backends), servable.load_seconds,
             )
             return servable
 

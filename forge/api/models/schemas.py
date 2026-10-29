@@ -654,7 +654,10 @@ class Prediction(BaseModel):
 
 
 class PredictResponse(BaseModel):
-    """Predictions from the model's current production version."""
+    """Predictions from the model's current production version.
+
+    ``backend`` is the backend that actually ran the request.
+    """
 
     model_name: str
     version: int
@@ -680,18 +683,43 @@ class BatchConfigResponse(BaseModel):
     enabled: bool
 
 
+class BackendParity(BaseModel):
+    """Parity of an ONNX backend against the model's native backend.
+
+    ``skipped`` means the backend couldn't be built (``reason`` says why);
+    otherwise ``passed`` reports whether it met the gate and is served.
+    """
+
+    backend: str
+    passed: bool
+    skipped: bool
+    max_abs_diff: float | None = None
+    label_agreement: float | None = None
+    max_abs_diff_limit: float | None = None
+    min_label_agreement: float | None = None
+    samples: int
+    reason: str | None = None
+
+
 class ServedModelResponse(BaseModel):
-    """A model loaded into the serving cache."""
+    """A model loaded into the serving cache.
+
+    ``backend`` is the native (default) backend; ``backends`` lists every
+    backend a predict request can select.
+    """
 
     model_name: str
     version: int
     run_id: UUID
     model_type: str
     backend: str
+    backends: list[str]
+    parity: list[BackendParity]
     input_shape: list[int]
     feature_names: list[str]
     loaded_at: datetime
     load_seconds: float
+    onnx_build_seconds: float
     batching: BatchConfigResponse
 
 
