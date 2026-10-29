@@ -2,12 +2,16 @@
 
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from sqlalchemy.exc import SQLAlchemyError
 
+from forge.api.models.database import SessionLocal
 from forge.api.routers import (
     analysis,
     datasets,
@@ -22,6 +26,7 @@ from forge.api.routers import (
     serving,
     webhooks,
 )
+from forge.api.services.run_recovery import recover_orphaned_runs
 from forge.api.services.runtime import configure_torch_threads
 
 logger = logging.getLogger(__name__)
@@ -29,7 +34,22 @@ logger = logging.getLogger(__name__)
 # Size torch's thread pool to the container CPU quota before any model runs
 configure_torch_threads()
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Startup: fail training runs orphaned by the previous process."""
+    db = SessionLocal()
+    try:
+        recover_orphaned_runs(db)
+    except SQLAlchemyError:
+        logger.exception("Could not recover orphaned runs at startup")
+    finally:
+        db.close()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Forge",
     description="ML Experimentation & Agent Operations Platform",
     version="0.1.0",
