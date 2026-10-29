@@ -8,7 +8,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from forge.api.routers import analysis, datasets, drift, experiments, feature_store, health, metrics, model_registry, ops, projects, webhooks
+from forge.api.routers import (
+    analysis,
+    datasets,
+    drift,
+    experiments,
+    feature_store,
+    health,
+    metrics,
+    model_registry,
+    ops,
+    projects,
+    webhooks,
+)
 
 logger = logging.getLogger(__name__)
 

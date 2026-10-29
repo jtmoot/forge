@@ -6,7 +6,7 @@ against datasets, and stores results for reuse by experiments.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -232,7 +232,7 @@ def compute_features(
         # Update registry
         registry.storage_path = storage_path
         registry.row_count = len(result_df)
-        registry.computed_at = datetime.now(timezone.utc)
+        registry.computed_at = datetime.now(UTC)
         registry.status = "ready"
         db.commit()
         db.refresh(registry)

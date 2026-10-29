@@ -6,7 +6,7 @@ validation rules and audit logging.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func
@@ -132,7 +132,7 @@ def register_version(
         version=next_version,
         run_id=run_id,
         stage="development",
-        stage_changed_at=datetime.now(timezone.utc),
+        stage_changed_at=datetime.now(UTC),
         stage_changed_by="api",
         s3_artifact_path=run.s3_artifact_path,
         model_size_mb=run.model_size_mb,
@@ -142,7 +142,7 @@ def register_version(
     db.add(mv)
 
     # Update model timestamp
-    model.updated_at = datetime.now(timezone.utc)
+    model.updated_at = datetime.now(UTC)
 
     db.commit()
     db.refresh(mv)
@@ -216,20 +216,20 @@ def transition_stage(
             _record_transition(db, current_prod, "production", "archived",
                                f"Auto-archived: replaced by version {mv.version}")
             current_prod.stage = "archived"
-            current_prod.stage_changed_at = datetime.now(timezone.utc)
+            current_prod.stage_changed_at = datetime.now(UTC)
             current_prod.stage_changed_by = "api"
 
     # Record transition
     _record_transition(db, mv, current_stage, new_stage, reason)
 
     mv.stage = new_stage
-    mv.stage_changed_at = datetime.now(timezone.utc)
+    mv.stage_changed_at = datetime.now(UTC)
     mv.stage_changed_by = "api"
 
     # Update parent model timestamp
     model = db.query(RegisteredModel).filter(RegisteredModel.id == mv.model_id).first()
     if model:
-        model.updated_at = datetime.now(timezone.utc)
+        model.updated_at = datetime.now(UTC)
 
     db.commit()
     db.refresh(mv)

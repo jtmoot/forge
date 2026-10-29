@@ -41,7 +41,7 @@ class TestTimeSeriesSplit:
 
     def test_default_ratios(self, sample_timeseries_df: pd.DataFrame) -> None:
         n = len(sample_timeseries_df)
-        train, val, test = time_series_split(sample_timeseries_df)
+        train, val, _test = time_series_split(sample_timeseries_df)
         assert len(train) == int(n * 0.70)
         assert len(val) == int(n * 0.85) - int(n * 0.70)
 
@@ -101,18 +101,18 @@ class TestExtractXY:
 
     def test_excludes_non_feature_columns(self, sample_timeseries_df: pd.DataFrame) -> None:
         df = create_target(sample_timeseries_df)
-        x, y = extract_xy(df)
+        x, _y = extract_xy(df)
         # Only rsi and macd_line should be features
         assert x.shape[1] == 2
 
     def test_y_shape(self, sample_timeseries_df: pd.DataFrame) -> None:
         df = create_target(sample_timeseries_df)
-        x, y = extract_xy(df)
+        _x, y = extract_xy(df)
         assert y.shape == (len(df),)
 
     def test_no_nans_in_x(self, sample_timeseries_df: pd.DataFrame) -> None:
         df = create_target(sample_timeseries_df)
         # Inject a NaN to verify it gets replaced
         df.iloc[0, df.columns.get_loc("rsi")] = np.nan
-        x, y = extract_xy(df)
+        x, _y = extract_xy(df)
         assert not np.any(np.isnan(x))

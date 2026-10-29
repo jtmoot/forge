@@ -1,12 +1,11 @@
 """Model registry router — register models, manage versions, transition stages."""
 
 import logging
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from forge.api.models.database import ModelVersion, get_db
+from forge.api.models.database import get_db
 from forge.api.models.schemas import (
     ModelDetailResponse,
     ModelListItem,
@@ -111,7 +110,7 @@ def transition_version_stage(
     """Transition a model version to a new stage."""
     # Look up by model name + version number
     try:
-        model, versions, _ = get_model_history(db, name)
+        _model, versions, _ = get_model_history(db, name)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -138,7 +137,7 @@ def compare_model_versions(
 ) -> ModelVersionCompareResponse:
     """Compare two versions of a model side-by-side."""
     try:
-        model, versions, _ = get_model_history(db, name)
+        _model, versions, _ = get_model_history(db, name)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

@@ -51,7 +51,7 @@ async def metrics_summary() -> dict:
                     count = sample.value
                     total_requests += count
                     status = sample.labels.get("status", "")
-                    if status.startswith("4") or status.startswith("5"):
+                    if status.startswith(("4", "5")):
                         total_errors += count
 
     error_rate = (total_errors / total_requests * 100) if total_requests > 0 else 0.0

@@ -8,11 +8,10 @@ over stored embeddings for the LangGraph analysis agent.
 import logging
 import os
 
-import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from forge.api.models.database import ExperimentEmbedding, Experiment, Run
+from forge.api.models.database import Experiment, ExperimentEmbedding, Run
 
 logger = logging.getLogger(__name__)
 

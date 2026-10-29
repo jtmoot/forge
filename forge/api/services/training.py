@@ -7,16 +7,16 @@ hardware profiling, and storing results in the database.
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sqlalchemy.orm import Session
+from torch import nn
 from xgboost import XGBClassifier
 
 from forge.api.models.database import Dataset, Experiment, Run
@@ -137,7 +137,7 @@ class TimeSeriesLSTM(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass: x shape (batch, seq_len, input_size) → (batch, 1)."""
-        lstm_out, (hidden, cell) = self.lstm(x)
+        _lstm_out, (hidden, _cell) = self.lstm(x)
         last_hidden = hidden[-1]
         output = self.sigmoid(self.fc(last_hidden))
         return output
@@ -670,7 +670,7 @@ def run_experiment_run(run_id: UUID, db: Session) -> Run:
 
     # Mark run as started
     run.status = "running"
-    run.started_at = datetime.now(timezone.utc)
+    run.started_at = datetime.now(UTC)
     db.commit()
 
     # Reproducibility: set seeds before anything else (including model init)
@@ -770,7 +770,7 @@ def run_experiment_run(run_id: UUID, db: Session) -> Run:
         run.wandb_run_id = wandb_run_id
         run.s3_artifact_path = s3_path
         run.status = "completed"
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
 
         db.commit()
         db.refresh(run)
@@ -794,7 +794,7 @@ def run_experiment_run(run_id: UUID, db: Session) -> Run:
         tracker.finish()  # clean up W&B run on failure
         EXPERIMENTS_TOTAL.labels(model_type=run.model_type, status="failed").inc()
         run.status = "failed"
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         db.commit()
         logger.exception("Run %s failed", run_id)
         raise

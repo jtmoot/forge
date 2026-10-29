@@ -34,6 +34,7 @@ def _run_git_command(args: list[str]) -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -283,18 +284,22 @@ def verify_reproducibility(run_id_a: UUID, run_id_b: UUID, db: Session) -> dict:
 
     # Check if metrics differ despite matching environments
     warnings: list[str] = []
-    if all_match and run_a.accuracy is not None and run_b.accuracy is not None:
-        if abs(run_a.accuracy - run_b.accuracy) > 1e-6:
-            warnings.append(
-                "All reproducibility factors match but metrics differ — "
-                "this is expected for some GPU operations (non-deterministic CUDA kernels)"
-            )
+    if (
+        all_match
+        and run_a.accuracy is not None
+        and run_b.accuracy is not None
+        and abs(run_a.accuracy - run_b.accuracy) > 1e-6
+    ):
+        warnings.append(
+            "All reproducibility factors match but metrics differ — "
+            "this is expected for some GPU operations (non-deterministic CUDA kernels)"
+        )
 
     # Dirty git warnings
     if env_a and env_a.git_dirty:
-        warnings.append(f"Run A had uncommitted changes (git dirty)")
+        warnings.append("Run A had uncommitted changes (git dirty)")
     if env_b and env_b.git_dirty:
-        warnings.append(f"Run B had uncommitted changes (git dirty)")
+        warnings.append("Run B had uncommitted changes (git dirty)")
 
     verdict = "reproducible" if all_match else "not_reproducible"
     if all_match and warnings:

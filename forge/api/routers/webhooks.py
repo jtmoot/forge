@@ -62,8 +62,7 @@ async def receive_github_webhook(
 
     # Extract branch from ref (e.g., "refs/heads/main" -> "main")
     branch = payload.ref
-    if branch.startswith("refs/heads/"):
-        branch = branch[len("refs/heads/"):]
+    branch = branch.removeprefix("refs/heads/")
 
     stored_events = []
     for commit in payload.commits:
