@@ -460,3 +460,114 @@ export function fetchReproduceSpec(experimentId: string, runId: string): Promise
 export function compareEnvironments(runA: string, runB: string): Promise<EnvironmentDiffResponse> {
   return apiFetch<EnvironmentDiffResponse>(`/api/experiments/compare-environments?run_a=${encodeURIComponent(runA)}&run_b=${encodeURIComponent(runB)}`);
 }
+
+// ---------------------------------------------------------------------------
+// Serving (mirrors forge/api/models/schemas.py serving schemas)
+// ---------------------------------------------------------------------------
+
+export interface BackendParity {
+  backend: string;
+  passed: boolean;
+  skipped: boolean;
+  max_abs_diff: number | null;
+  label_agreement: number | null;
+  max_abs_diff_limit: number | null;
+  min_label_agreement: number | null;
+  samples: number;
+  reason: string | null;
+}
+
+export interface BatchConfigResponse {
+  model_name: string;
+  max_batch_size: number;
+  max_wait_ms: number;
+  enabled: boolean;
+}
+
+export interface ServedModelResponse {
+  model_name: string;
+  version: number;
+  run_id: string;
+  model_type: string;
+  backend: string;
+  backends: string[];
+  parity: BackendParity[];
+  input_shape: number[];
+  feature_names: string[];
+  loaded_at: string;
+  load_seconds: number;
+  onnx_build_seconds: number;
+  batching: BatchConfigResponse;
+}
+
+export interface BenchmarkCell {
+  backend: string;
+  max_batch_size: number;
+  max_wait_ms: number;
+  concurrency: number;
+  requests: number;
+  errors: number;
+  error_rate: number;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  p99_ms: number | null;
+  mean_ms: number | null;
+  throughput_rps: number;
+  mean_batch_rows: number;
+  duration_s: number;
+}
+
+export interface BenchmarkResponse {
+  id: string;
+  model_name: string;
+  model_version: number;
+  status: "running" | "completed" | "failed";
+  params: {
+    backends: string[] | null;
+    batch_configs: { max_batch_size: number; max_wait_ms: number }[];
+    concurrency: number[];
+    requests_per_cell: number;
+    latency_scope?: string;
+    input_samples?: number;
+  } | null;
+  runtime: { cpu_count: number; cpu_limit: number | null; torch_threads: number } | null;
+  results: BenchmarkCell[];
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface BenchmarkSummary {
+  id: string;
+  model_name: string;
+  model_version: number;
+  status: string;
+  cells: number;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export function fetchServedModel(name: string): Promise<ServedModelResponse> {
+  return apiFetch<ServedModelResponse>(`/api/serve/${encodeURIComponent(name)}`);
+}
+
+export function fetchBenchmarks(name: string, limit = 10): Promise<{ benchmarks: BenchmarkSummary[] }> {
+  return apiFetch<{ benchmarks: BenchmarkSummary[] }>(`/api/serve/${encodeURIComponent(name)}/benchmarks?limit=${limit}`);
+}
+
+export function fetchBenchmark(id: string): Promise<BenchmarkResponse> {
+  return apiFetch<BenchmarkResponse>(`/api/serve/benchmarks/${encodeURIComponent(id)}`);
+}
+
+export async function startBenchmark(name: string): Promise<BenchmarkResponse> {
+  const res = await fetch(`${API_BASE}/api/serve/${encodeURIComponent(name)}/benchmarks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `API ${res.status}: ${res.statusText}`);
+  }
+  return res.json() as Promise<BenchmarkResponse>;
+}
