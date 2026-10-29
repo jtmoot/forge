@@ -72,12 +72,15 @@ class MicroBatcher:
         predict_fn: Callable[[np.ndarray], np.ndarray],
         config: BatchConfig,
         label: str = "default",
+        thread_initializer: Callable[[], None] | None = None,
     ) -> None:
         self.config = config
         self.label = label
         self.retired = False
         self._predict_fn = predict_fn
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"batcher-{label}")
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"batcher-{label}", initializer=thread_initializer
+        )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._queue: asyncio.Queue | None = None
         self._worker: asyncio.Task | None = None
