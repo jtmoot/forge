@@ -12,6 +12,7 @@ from forge.api.models.schemas import (
     PredictResponse,
     ServedModelListResponse,
     ServedModelResponse,
+    ServingRuntime,
 )
 from forge.api.services.model_server import (
     InvalidInputError,
@@ -23,6 +24,7 @@ from forge.api.services.model_server import (
     model_cache,
     run_inference,
 )
+from forge.api.services.runtime import runtime_info
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +62,11 @@ def _describe(servable: ServableModel) -> ServedModelResponse:
 
 @router.get("", response_model=ServedModelListResponse)
 def list_served_models() -> ServedModelListResponse:
-    """List models currently loaded in the serving cache."""
-    return ServedModelListResponse(models=[_describe(s) for s in model_cache.loaded()])
+    """List models currently loaded in the serving cache, and the runtime serving them."""
+    return ServedModelListResponse(
+        models=[_describe(s) for s in model_cache.loaded()],
+        runtime=ServingRuntime(**runtime_info()),
+    )
 
 
 @router.get("/{model_name}", response_model=ServedModelResponse)

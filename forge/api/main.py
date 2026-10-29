@@ -22,8 +22,12 @@ from forge.api.routers import (
     serving,
     webhooks,
 )
+from forge.api.services.runtime import configure_torch_threads
 
 logger = logging.getLogger(__name__)
+
+# Size torch's thread pool to the container CPU quota before any model runs
+configure_torch_threads()
 
 app = FastAPI(
     title="Forge",
